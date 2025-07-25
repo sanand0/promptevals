@@ -1,11 +1,12 @@
-import { SSE } from "https://cdn.jsdelivr.net/npm/sse.js@2";
+import { asyncLLM } from "https://cdn.jsdelivr.net/npm/asyncllm@2";
 import { parse } from "https://cdn.jsdelivr.net/npm/partial-json@0.1.7/+esm";
 import { html, render } from "https://cdn.jsdelivr.net/npm/lit-html@3/+esm";
 import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 import { num2, pc1 } from "https://cdn.jsdelivr.net/npm/@gramex/ui/dist/format.js";
-import { AsyncQueue } from "https://cdn.jsdelivr.net/npm/@ai-zen/async-queue@1.3.1/+esm";
 import { sumBy, sortBy } from "https://cdn.jsdelivr.net/npm/lodash-es@4/+esm";
 import { diffWords } from "https://cdn.jsdelivr.net/npm/diff@7/+esm";
+import { bootstrapAlert } from "https://cdn.jsdelivr.net/npm/bootstrap-alert@1";
+import { openaiConfig } from "https://cdn.jsdelivr.net/npm/bootstrap-llm-provider@1.1";
 
 const $prompt = document.querySelector("#prompt");
 const $promptModel = document.querySelector("#prompt-model");
@@ -38,33 +39,19 @@ let data;
 let criteria = [];
 let revisedPrompt;
 
-const { token } = await fetch("https://llmfoundry.straive.com/token", { credentials: "include" }).then((r) => r.json());
-if (!token) {
-  const url = "https://llmfoundry.straive.com/login?" + new URLSearchParams({ next: location.href });
-  render(html`<a class="btn btn-primary" href="${url}">Log into LLM Foundry</a></p>`, document.querySelector("#login"));
-}
+const baseUrls = [
+  { url: "https://llmfoundry.straivedemo.com/openai/v1", name: "LLM Foundry (demo)" },
+  { url: "https://llmfoundry.straive.com/openai/v1", name: "LLM Foundry (main)" },
+  { url: "https://aipipe.org/openai/v1", name: "AI Pipe" },
+];
 
-const llmStream = (body) => {
-  const queue = new AsyncQueue();
-  Object.assign(body, { stream: true, stream_options: { include_usage: true } });
-  const source = new SSE("https://llmfoundry.straive.com/openai/v1/chat/completions", {
+const llmStream = async (body) => {
+  const { baseUrl, apiKey } = await openaiConfig({ baseUrls });
+  return asyncLLM(`${baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}:promptevals` },
-    payload: JSON.stringify(body),
-    start: false,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ ...body, stream: true }),
   });
-  let content = "";
-  let usage = null;
-  source.addEventListener("message", (event) => {
-    if (event.data == "[DONE]") return queue.done();
-    const message = JSON.parse(event.data);
-    const content_delta = message.choices?.[0]?.delta?.content;
-    if (content_delta) content += content_delta;
-    if (message.usage) usage = message.usage;
-    queue.push({ content, usage });
-  });
-  source.stream();
-  return queue;
 };
 
 document.querySelector("#demos").addEventListener("click", async (event) => {
@@ -76,6 +63,11 @@ document.querySelector("#demos").addEventListener("click", async (event) => {
     $data.value = data.map((row) => data.columns.map((c) => row[c]).join("\t")).join("\n");
     $data.dispatchEvent(new Event("input", { bubbles: true }));
   }
+});
+
+document.querySelector("#configure-llm").addEventListener("click", async () => {
+  console.log(baseUrls);
+  await openaiConfig({ baseUrls, show: true })
 });
 
 $generatePrompt.addEventListener("click", async () => {
@@ -93,7 +85,7 @@ $generatePrompt.addEventListener("click", async () => {
     sample = shuffler(data).slice(0, document.querySelector("#sample").value);
     $generatePrompt.querySelector(".loading").classList.remove("d-none");
     $generatePrompt.disabled = true;
-    for await (const { content, usage } of llmStream({
+    for await (const { content } of await llmStream({
       model: $promptModel.value,
       messages: generatePromptMessages(sample),
     })) {
@@ -190,7 +182,7 @@ let generating, generateCancel;
 
 $generateOutput.addEventListener("click", async () => {
   if (!data || !$prompt.value) {
-    alert("Please generate a prompt first.");
+    bootstrapAlert({ color: "danger", body: "Please generate a prompt first." });
     return;
   }
 
@@ -208,7 +200,7 @@ $generateOutput.addEventListener("click", async () => {
     $outputProgress.style.width = `${(index / data.length) * 100}%`;
     if (generateCancel) break;
     try {
-      for await (const { content } of llmStream({
+      for await (const { content } of await llmStream({
         model: $outputModel.value,
         messages: [
           { role: "system", content: $prompt.value },
@@ -302,7 +294,7 @@ let evaluating, evaluateCancel;
 
 $evaluatePrompt.addEventListener("click", async () => {
   if (!data || data.length === 0 || !data[0].generated) {
-    alert("Please generate outputs first.");
+    bootstrapAlert({ color: "danger", body: "Please generate outputs first." });
     return;
   }
 
@@ -315,9 +307,10 @@ $evaluatePrompt.addEventListener("click", async () => {
   evaluateCancel = false;
 
   // Evaluate embedding similarity
-  const response = await fetch("https://llmfoundry.straive.com/similarity", {
+  const { baseUrl, apiKey } = await openaiConfig({ baseUrls });
+  const response = await fetch(baseUrl.replace("openai/v1", "similarity"), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}:promptevals` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       docs: data.map((d) => d.generated),
       topics: data.map((d) => d.output),
@@ -355,7 +348,7 @@ $evaluatePrompt.addEventListener("click", async () => {
   };
   for (const row of data) {
     if (evaluateCancel) break;
-    for await (const { content, usage } of llmStream({
+    for await (const { content } of await llmStream({
       model: $evaluationModel.value,
       messages: [
         { role: "system", content: `Given the <EXPECTED> text and the <GENERATED> output, evaluate the criteria.` },
@@ -450,7 +443,7 @@ $evaluateCancel.addEventListener("click", () => {
 
 $revisePrompt.addEventListener("click", async () => {
   if (!data || data.length === 0 || !data[0].generated || !data[0].embeddingSimilarity) {
-    alert("Please generate outputs and evaluate the prompt first.");
+    bootstrapAlert({ color: "danger", body: "Please generate outputs and evaluate the prompt first." });
     return;
   }
 
@@ -458,7 +451,7 @@ $revisePrompt.addEventListener("click", async () => {
   const sortedData = sortBy(data, (d) => d.embeddingSimilarity + sumBy(criteria, (term) => (d[term]?.success ? 1 : 0)));
   const examples = sortedData.slice(0, +document.querySelector("#examples").value);
   $revisedPrompt.innerHTML = /* html */ `<div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div>`;
-  for await (const { content, usage } of llmStream({
+  for await (const { content } of await llmStream({
     model: $revisionModel.value,
     messages: [
       ...generatePromptMessages(sample),
@@ -513,7 +506,7 @@ ${criteria
 
 $applyPrompt.addEventListener("click", () => {
   if (!revisedPrompt) {
-    alert("Please revise the prompt first.");
+    bootstrapAlert({ color: "danger", body: "Please revise the prompt first." });
     return;
   }
   $prompt.value = revisedPrompt;

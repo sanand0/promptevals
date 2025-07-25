@@ -92,7 +92,12 @@
     </div>
 
     <div class="row">
-      <div class="col-md-4 d-flex align-items-end mb-3">
+      <div class="col-md-3 d-flex align-items-end mb-3">
+        <button class="btn btn-primary w-100" id="configure-llm">
+          Configure LLM
+        </button>
+      </div>
+      <div class="col-md-3 d-flex align-items-end mb-3">
         <button class="btn btn-primary w-100" id="generate-prompt">
           1. Generate prompt
           <span class="loading spinner-border spinner-border-sm d-none" aria-hidden="true"></span>
@@ -102,7 +107,7 @@
         <label for="sample" class="form-label fw-bold">Sample size</label>
         <input class="form-control" type="number" id="sample" min="1" value="5" aria-label="Number of samples to generate prompt">
       </div>
-      <div class="col-md-6 mb-3">
+      <div class="col-md-4 mb-3">
         <label for="prompt-model" class="form-label fw-bold">Prompt Model</label>
         <select class="form-select" id="prompt-model" aria-label="Select prompt model">
           <option value="gpt-4.1-nano">OpenAI GPT 4.1 Nano</option>
